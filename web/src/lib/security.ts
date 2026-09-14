@@ -9,6 +9,26 @@ setInterval(() => {
   usedNonces.clear();
 }, 10 * 60 * 1000);
 
+const inMemoryTokens = new Map<string, Date>();
+
+export function registerInMemoryToken(token: string, expiresAt: Date) {
+  inMemoryTokens.set(token, expiresAt);
+}
+
+export function verifyInMemoryToken(token: string): boolean {
+  const exp = inMemoryTokens.get(token);
+  if (!exp) return false;
+  if (exp < new Date()) {
+    inMemoryTokens.delete(token);
+    return false;
+  }
+  return true;
+}
+
+export function removeInMemoryToken(token: string) {
+  inMemoryTokens.delete(token);
+}
+
 export function generateDeviceSecret(): string {
   return 'sec_' + crypto.randomBytes(24).toString('hex');
 }

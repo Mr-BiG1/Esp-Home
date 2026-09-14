@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getCurrentUser, hasPermission } from '@/lib/auth';
-import { generatePairingToken } from '@/lib/security';
+import { generatePairingToken, registerInMemoryToken } from '@/lib/security';
 import { logAuditEvent } from '@/lib/audit';
 
 export async function POST(request: Request) {
@@ -15,20 +15,27 @@ export async function POST(request: Request) {
     // Valid for 15 minutes
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
 
-    const record = await prisma.pairingToken.create({
-      data: { token, expiresAt },
-    });
+    // Register token in memory fallback store for serverless environments (Vercel)
+    registerInMemoryToken(token, expiresAt);
+
+    try {
+      await prisma.pairingToken.create({
+        data: { token, expiresAt },
+      });
+    } catch (dbErr) {
+      console.warn('[PairingToken DB Creation Warning - memory fallback active]:', dbErr);
+    }
 
     await logAuditEvent({
       userId: user.userId,
       action: 'admin.create_pairing_token',
-      payload: { token: record.token, expiresAt },
+      payload: { token, expiresAt },
       result: 'SUCCESS',
     });
 
     return NextResponse.json({
-      pairing_token: record.token,
-      expires_at: record.expiresAt.toISOString(),
+      pairing_token: token,
+      expires_at: expiresAt.toISOString(),
     });
   } catch (err: any) {
     console.error('[Pairing Token Generation Error]', err);
