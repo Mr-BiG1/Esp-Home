@@ -47,7 +47,8 @@ CONFIG = {
     "cloud_endpoint": "http://localhost:3000/api/v1",
     "poll_interval_sec": 5,
     "relay_pins": [17, 27, 22, 23],  # BCM pin numbers
-    "fullscreen": True if os.environ.get("DESKTOP_SESSION") is None else False
+    "fullscreen": True if os.environ.get("DESKTOP_SESSION") is None else False,
+    "screen_rotation": 0  # Set to 180 for upside-down display flip
 }
 
 # Color Palette (Dark Mode Glassmorphism)
@@ -441,6 +442,8 @@ class TouchApp:
             self.screen.blit(m_surf, (self.pad_x + 20, box_r[1] + 15 + i * step_y))
 
     def handle_click(self, pos):
+        if CONFIG.get("screen_rotation", 0) == 180:
+            pos = (self.width - pos[0], self.height - pos[1])
         for rect, cb_type, payload in self.clickable_rects:
             if rect.collidepoint(pos):
                 if cb_type == "TAB":
@@ -481,18 +484,40 @@ class TouchApp:
                                 self.status["active_tab"] = (self.status["active_tab"] - 1) % 3
                         self.touch_start_x = None
 
-            # Render Screen
-            self.screen.fill(COLOR_BG)
-            self.render_header()
+            # Render Screen to main window or rotated buffer
+            if CONFIG.get("screen_rotation", 0) == 180:
+                # Render to offscreen surface then flip 180
+                offscreen = pygame.Surface((self.width, self.height))
+                offscreen.fill(COLOR_BG)
+                
+                # Temporarily point drawing to offscreen
+                real_screen = self.screen
+                self.screen = offscreen
+                
+                self.render_header()
+                if self.status["active_tab"] == 0:
+                    self.render_home_page()
+                elif self.status["active_tab"] == 1:
+                    self.render_relays_page()
+                elif self.status["active_tab"] == 2:
+                    self.render_system_page()
+                self.render_tabs()
 
-            if self.status["active_tab"] == 0:
-                self.render_home_page()
-            elif self.status["active_tab"] == 1:
-                self.render_relays_page()
-            elif self.status["active_tab"] == 2:
-                self.render_system_page()
+                self.screen = real_screen
+                rotated_surf = pygame.transform.rotate(offscreen, 180)
+                self.screen.blit(rotated_surf, (0, 0))
+            else:
+                self.screen.fill(COLOR_BG)
+                self.render_header()
 
-            self.render_tabs()
+                if self.status["active_tab"] == 0:
+                    self.render_home_page()
+                elif self.status["active_tab"] == 1:
+                    self.render_relays_page()
+                elif self.status["active_tab"] == 2:
+                    self.render_system_page()
+
+                self.render_tabs()
 
             pygame.display.flip()
             self.clock.tick(30)
