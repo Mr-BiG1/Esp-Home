@@ -2,7 +2,7 @@
 # ==============================================================================
 # Smart Home Mesh Controller — Raspberry Pi OS Display & Touch Installer
 # Configures DSI / HDMI / SPI Touchscreens and auto-launches Kiosk Touch UI.
-# Compatible with Raspberry Pi OS (Bullseye & Bookworm)
+# Compatible with Raspberry Pi OS (Bullseye, Bookworm, and Trixie / Pi 5)
 # ==============================================================================
 
 set -e
@@ -25,7 +25,8 @@ apt-get install -y \
   python3-pygame \
   python3-psutil \
   python3-requests \
-  python3-rpi.gpio \
+  python3-gpiozero \
+  python3-lgpio \
   x11-xserver-utils \
   unclutter \
   git \
@@ -33,7 +34,7 @@ apt-get install -y \
 
 echo "[2/4] Configuring Raspberry Pi Display & Touch Overlay..."
 
-# Detect config file location (Bookworm uses /boot/firmware/config.txt, older uses /boot/config.txt)
+# Detect config file location (Bookworm / Trixie uses /boot/firmware/config.txt, older uses /boot/config.txt)
 CONFIG_FILE="/boot/config.txt"
 if [ -f "/boot/firmware/config.txt" ]; then
   CONFIG_FILE="/boot/firmware/config.txt"

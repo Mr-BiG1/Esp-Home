@@ -2,7 +2,7 @@
 """
 Smart Home Mesh Controller — Raspberry Pi OS Touchscreen GUI Application
 Supports full 800x480 / 480x320 touch displays on Raspberry Pi OS.
-Features live environment monitoring, interactive relay toggles, touch gestures, and cloud mesh sync.
+Compatible with Raspberry Pi 3, 4, 5 and Debian Trixie / Bookworm / Bullseye kernels.
 """
 
 import sys
@@ -17,12 +17,19 @@ import socket
 import hmac
 import hashlib
 
-# Check for RPi.GPIO (runs in mock mode on non-RPi testing systems)
+# GPIO Library Detection (Supports legacy RPi.GPIO, gpiozero, and Pi 5 lgpio/gpiod)
+GPIO_TYPE = None
+gpio_devices = []
+
 try:
-    import RPi.GPIO as GPIO
-    GPIO_AVAILABLE = True
-except (ImportError, RuntimeError):
-    GPIO_AVAILABLE = False
+    from gpiozero import OutputDevice
+    GPIO_TYPE = "gpiozero"
+except Exception:
+    try:
+        import RPi.GPIO as GPIO
+        GPIO_TYPE = "rpi_gpio"
+    except Exception:
+        GPIO_TYPE = None
 
 import pygame
 from pygame.locals import *
@@ -56,18 +63,53 @@ class HardwareManager:
     def __init__(self, relay_pins):
         self.relay_pins = relay_pins
         self.states = [False] * len(relay_pins)
-        if GPIO_AVAILABLE:
+        self.mode = "mock"
+        self.devices = []
+
+        # Try gpiozero first (Works on RPi 5, 4, 3 with RP1 & lgpio backend)
+        try:
+            from gpiozero import OutputDevice
+            for pin in self.relay_pins:
+                dev = OutputDevice(pin, active_high=True, initial_value=False)
+                self.devices.append(dev)
+            self.mode = "gpiozero"
+            print(f"[HardwareManager] GPIO initialized via gpiozero (Pi 5 / Bookworm / Trixie supported)")
+            return
+        except Exception as e:
+            print(f"[HardwareManager] gpiozero initialization skipped: {e}")
+
+        # Fallback to RPi.GPIO with full safety catch for Pi 5 peripheral base address error
+        try:
+            import RPi.GPIO as GPIO
             GPIO.setmode(GPIO.BCM)
             GPIO.setwarnings(False)
             for pin in self.relay_pins:
                 GPIO.setup(pin, GPIO.OUT)
                 GPIO.output(pin, GPIO.LOW)
+            self.mode = "rpi_gpio"
+            self.rpi_gpio = GPIO
+            print(f"[HardwareManager] GPIO initialized via RPi.GPIO")
+            return
+        except Exception as e:
+            print(f"[HardwareManager] RPi.GPIO unsupported on this kernel/SOC ({e}). Running in software emulation mode.")
+            self.mode = "mock"
 
     def set_relay(self, index, state):
         if 0 <= index < len(self.relay_pins):
             self.states[index] = state
-            if GPIO_AVAILABLE:
-                GPIO.output(self.relay_pins[index], GPIO.HIGH if state else GPIO.LOW)
+            if self.mode == "gpiozero":
+                try:
+                    if state:
+                        self.devices[index].on()
+                    else:
+                        self.devices[index].off()
+                except Exception as e:
+                    print(f"Error setting gpiozero pin: {e}")
+            elif self.mode == "rpi_gpio":
+                try:
+                    self.rpi_gpio.output(self.relay_pins[index], self.rpi_gpio.HIGH if state else self.rpi_gpio.LOW)
+                except Exception as e:
+                    print(f"Error setting RPi.GPIO pin: {e}")
 
     def toggle_relay(self, index):
         if 0 <= index < len(self.relay_pins):
@@ -76,8 +118,17 @@ class HardwareManager:
         return False
 
     def cleanup(self):
-        if GPIO_AVAILABLE:
-            GPIO.cleanup()
+        if self.mode == "gpiozero":
+            for dev in self.devices:
+                try:
+                    dev.close()
+                except Exception:
+                    pass
+        elif self.mode == "rpi_gpio":
+            try:
+                self.rpi_gpio.cleanup()
+            except Exception:
+                pass
 
 class CloudSyncThread(threading.Thread):
     def __init__(self, hw_mgr, status_dict):
@@ -326,7 +377,7 @@ class TouchApp:
             f"CPU Temperature: {self.status['cpu_temp']:.1f} °C",
             f"Uptime: {int(time.time() - psutil.boot_time()) // 3600} hours",
             f"Cloud API Endpoint: {CONFIG['cloud_endpoint']}",
-            f"GPIO Driver Status: {'RPi.GPIO Active' if GPIO_AVAILABLE else 'Mock Emulation'}"
+            f"GPIO Driver Mode: {self.hw.mode}"
         ]
 
         for i, m in enumerate(metrics):
