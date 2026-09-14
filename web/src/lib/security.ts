@@ -1,0 +1,86 @@
+import crypto from 'crypto';
+import { prisma } from './db';
+
+const TIMESTAMP_WINDOW_SECONDS = 60; // ±60s allowed drift
+const usedNonces = new Set<string>();
+
+// Clean up expired nonces every 10 minutes
+setInterval(() => {
+  usedNonces.clear();
+}, 10 * 60 * 1000);
+
+export function generateDeviceSecret(): string {
+  return 'sec_' + crypto.randomBytes(24).toString('hex');
+}
+
+export function generatePairingToken(): string {
+  const code = Math.floor(100000 + Math.random() * 900000).toString();
+  return `PAIR-${code.slice(0, 3)}-${code.slice(3)}`;
+}
+
+export function computeHmacSignature(secret: string, payloadString: string): string {
+  return crypto.createHmac('sha256', secret).update(payloadString).digest('hex');
+}
+
+export async function verifyDeviceSignature(
+  deviceId: string,
+  timestampStr: string,
+  nonce: string,
+  signature: string,
+  requestBodyText: string
+): Promise<{ valid: boolean; error?: string }> {
+  if (!deviceId || !timestampStr || !nonce || !signature) {
+    return { valid: false, error: 'Missing security headers (X-Device-ID, X-Timestamp, X-Nonce, X-Signature)' };
+  }
+
+  // 1. Verify Timestamp Drift
+  const nowUnix = Math.floor(Date.now() / 1000);
+  const reqUnix = parseInt(timestampStr, 10);
+  if (isNaN(reqUnix) || Math.abs(nowUnix - reqUnix) > TIMESTAMP_WINDOW_SECONDS) {
+    return { valid: false, error: 'Timestamp out of allowed drift window (replay protection)' };
+  }
+
+  // 2. Verify Nonce uniqueness
+  const nonceKey = `${deviceId}:${nonce}:${timestampStr}`;
+  if (usedNonces.has(nonceKey)) {
+    return { valid: false, error: 'Duplicate nonce detected (replay attempt rejected)' };
+  }
+
+  // 3. Fetch device credential from DB
+  let credential = null;
+  try {
+    credential = await prisma.deviceCredential.findFirst({
+      where: { deviceId, isRevoked: false },
+      include: { device: true },
+    });
+  } catch (e) {
+    // If DB isn't reachable or setup yet
+    return { valid: false, error: 'Device authentication database lookup failed' };
+  }
+
+  if (!credential || credential.device.registrationStatus === 'REVOKED') {
+    return { valid: false, error: 'Device is unregistered or credential has been revoked' };
+  }
+
+  // 4. Compute expected signature
+  const signedString = `${deviceId}${timestampStr}${nonce}${requestBodyText}`;
+  const expectedSig = computeHmacSignature(credential.secretHash, signedString);
+
+  const sigBuffer = Buffer.from(signature, 'hex');
+  const expBuffer = Buffer.from(expectedSig, 'hex');
+
+  if (sigBuffer.length !== expBuffer.length || !crypto.timingSafeEqual(sigBuffer, expBuffer)) {
+    return { valid: false, error: 'Invalid cryptographic signature' };
+  }
+
+  // Mark nonce as used
+  usedNonces.add(nonceKey);
+
+  // Update last used timestamp asynchronously
+  prisma.deviceCredential.update({
+    where: { id: credential.id },
+    data: { lastUsedAt: new Date() },
+  }).catch(() => {});
+
+  return { valid: true };
+}

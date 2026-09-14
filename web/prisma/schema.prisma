@@ -1,0 +1,266 @@
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id            String     @id @default(uuid())
+  email         String     @unique
+  name          String
+  passwordHash  String
+  role          String     @default("USER") // ADMIN, USER, VIEWER
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+  auditLogs     AuditLog[]
+  commands      Command[]
+}
+
+model Device {
+  id                 String             @id @default(uuid())
+  deviceId           String             @unique // e.g. HOME-CTRL-001
+  macAddress         String             @unique
+  chipId             String
+  firmwareVersion    String
+  name               String
+  deviceType         String             @default("ESP32-S3-CONTROLLER")
+  location           String?
+  registrationStatus String             @default("UNREGISTERED") // UNREGISTERED, PAIRING, REGISTERED, ACTIVE, REVOKED
+  lastHeartbeat      DateTime?
+  wifiStatus         String?
+  ipAddress          String?
+  wifiSignalRssi     Int?
+  uptimeSeconds      BigInt             @default(0)
+  capabilitiesJson   String             @default("[]") // JSON array of string capabilities
+  configVersion      Int                @default(1)
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  credentials        DeviceCredential[]
+  modules            DeviceModule[]
+  telemetry          DeviceTelemetry[]
+  commands           Command[]
+  configurations     Configuration[]
+  alerts             Alert[]
+  auditLogs          AuditLog[]
+  states             DeviceState[]
+}
+
+model DeviceCredential {
+  id           String    @id @default(uuid())
+  deviceId     String
+  device       Device    @relation(fields: [deviceId], references: [deviceId], onDelete: Cascade)
+  secretHash   String
+  tokenVersion Int       @default(1)
+  isRevoked    Boolean   @default(false)
+  lastUsedAt   DateTime?
+  createdAt    DateTime  @default(now())
+}
+
+model DeviceModule {
+  id         String   @id @default(uuid())
+  deviceId   String
+  device     Device   @relation(fields: [deviceId], references: [deviceId], onDelete: Cascade)
+  moduleKey  String   // e.g. "relay", "sensor.temperature"
+  name       String
+  version    String
+  configJson String   // JSON string
+  status     String   @default("ACTIVE")
+  updatedAt  DateTime @updatedAt
+
+  @@unique([deviceId, moduleKey])
+}
+
+model DeviceState {
+  id        String   @id @default(uuid())
+  deviceId  String
+  device    Device   @relation(fields: [deviceId], references: [deviceId], onDelete: Cascade)
+  stateJson String   // JSON string
+  updatedAt DateTime @updatedAt
+
+  @@unique([deviceId])
+}
+
+model DeviceTelemetry {
+  id            String   @id @default(uuid())
+  deviceId      String
+  device        Device   @relation(fields: [deviceId], references: [deviceId], onDelete: Cascade)
+  telemetryType String
+  payloadJson   String   // JSON payload
+  timestamp     DateTime @default(now())
+}
+
+model Command {
+  commandId       String   @id @default(uuid())
+  deviceId        String
+  device          Device   @relation(fields: [deviceId], references: [deviceId], onDelete: Cascade)
+  module          String
+  action          String
+  parametersJson  String   // JSON string
+  status          String   @default("PENDING") // PENDING, DELIVERED, ACKNOWLEDGED, EXECUTED, FAILED, EXPIRED, CANCELLED
+  idempotencyKey  String?  @unique
+  createdByUserId String?
+  createdByUser   User?    @relation(fields: [createdByUserId], references: [id])
+  expiresAt       DateTime
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  result          CommandResult?
+}
+
+model CommandResult {
+  id              String   @id @default(uuid())
+  commandId       String   @unique
+  command         Command  @relation(fields: [commandId], references: [commandId], onDelete: Cascade)
+  deviceId        String
+  status          String
+  errorCode       String?
+  errorMessage    String?
+  executionTimeMs Int?
+  executedAt      DateTime @default(now())
+}
+
+model Configuration {
+  id         String   @id @default(uuid())
+  deviceId   String
+  device     Device   @relation(fields: [deviceId], references: [deviceId], onDelete: Cascade)
+  version    Int
+  configJson String   // JSON payload
+  createdAt  DateTime @default(now())
+
+  @@unique([deviceId, version])
+}
+
+model Alert {
+  id        String   @id @default(uuid())
+  deviceId  String?
+  device    Device?  @relation(fields: [deviceId], references: [deviceId], onDelete: Cascade)
+  severity  String   @default("WARNING") // DEBUG, INFO, WARNING, ERROR, CRITICAL
+  message   String
+  isRead    Boolean  @default(false)
+  timestamp DateTime @default(now())
+}
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id])
+  deviceId    String?
+  device      Device?  @relation(fields: [deviceId], references: [deviceId])
+  action      String
+  payloadJson String?
+  result      String
+  sourceIp    String?
+  timestamp   DateTime @default(now())
+}
+
+model PairingToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
+
+model Server {
+  id               String         @id @default(uuid())
+  name             String
+  hostname         String         @unique
+  ipAddress        String
+  os               String         @default("Linux")
+  online           Boolean        @default(true)
+  isMeasured       Boolean        @default(true) // Data provenance tag
+  lastSeen         DateTime       @default(now())
+  cpuUsage         Float          @default(0.0)
+  memUsage         Float          @default(0.0)
+  gpuTemp          Float          @default(0.0)
+  diskUsage        Float          @default(0.0)
+  uptimeSeconds    BigInt         @default(0)
+  powerRelayIndex  Int?           @default(0)
+  metrics          ServerMetric[]
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+}
+
+model ServerMetric {
+  id        String   @id @default(uuid())
+  serverId  String
+  server    Server   @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  cpuUsage  Float
+  memUsage  Float
+  gpuTemp   Float
+  diskUsage Float
+  timestamp DateTime @default(now())
+}
+
+model ClimateZone {
+  id               String          @id @default(uuid())
+  name             String
+  targetTemp       Float           @default(21.5)
+  currentTemp      Float           @default(22.0)
+  currentHumidity  Float           @default(45.0)
+  mode             String          @default("AUTO") // AUTO, BOOST, MANUAL, OFF
+  hysteresis       Float           @default(0.5)
+  heaterRelayIndex Int             @default(2)
+  safetyStatus     String          @default("OK")
+  isMeasured       Boolean         @default(true)
+  metrics          ClimateMetric[]
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+}
+
+model ClimateMetric {
+  id          String      @id @default(uuid())
+  zoneId      String
+  zone        ClimateZone @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+  temperature Float
+  humidity    Float
+  heaterOn    Boolean
+  timestamp   DateTime    @default(now())
+}
+
+model TaskItem {
+  id          String    @id @default(uuid())
+  text        String
+  category    String    @default("General")
+  priority    Int       @default(1) // 0=LOW, 1=MED, 2=HIGH
+  completed   Boolean   @default(false)
+  completedAt DateTime?
+  dueDate     DateTime?
+  createdAt   DateTime  @default(now())
+}
+
+model CalendarEvent {
+  id          String   @id @default(uuid())
+  title       String
+  description String?
+  startTime   DateTime
+  endTime     DateTime
+  location    String?
+  isAllDay    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+}
+
+model AutomationRule {
+  id                   String    @id @default(uuid())
+  name                 String
+  enabled              Boolean   @default(true)
+  triggerType          String    // e.g. "TEMP_ABOVE", "SERVER_OFFLINE", "SCHEDULE"
+  triggerConditionJson String    // JSON parameters
+  actionType           String    // e.g. "RELAY_TOGGLE", "SEND_ALERT"
+  actionPayloadJson    String    // JSON parameters
+  lastTriggeredAt      DateTime?
+  createdAt            DateTime  @default(now())
+}
+
+model LayoutCanvas {
+  id          String   @id @default(uuid())
+  name        String
+  gridColumns Int      @default(320)
+  gridRows    Int      @default(240)
+  widgetsJson String   @default("[]") // JSON array of screen elements
+  isDefault   Boolean  @default(false)
+  updatedAt   DateTime @updatedAt
+}

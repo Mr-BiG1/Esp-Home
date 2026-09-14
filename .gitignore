@@ -1,0 +1,31 @@
+# Build & environment artifacts
+.pio/
+.vscode/
+.idea/
+*.o
+*.elf
+*.bin
+*.hex
+
+# Node & Next.js
+node_modules/
+.next/
+out/
+build/
+dist/
+*.log
+
+# Database & local secrets
+*.db
+*.sqlite
+*.sqlite3
+.env
+.env.local
+
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+venv/
+.venv/
