@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { generateDeviceSecret, verifyInMemoryToken, removeInMemoryToken } from '@/lib/security';
 import { logAuditEvent } from '@/lib/audit';
+import { upsertStoreDevice } from '@/lib/device_store';
 
 export async function POST(request: Request) {
   try {
@@ -100,6 +101,19 @@ export async function POST(request: Request) {
     }
 
     removeInMemoryToken(pairing_token);
+
+    // Register device in in-memory store for instant Web UI visibility on Vercel
+    upsertStoreDevice({
+      deviceId,
+      macAddress: mac_address,
+      chipId: chip_id,
+      firmwareVersion: firmware_version || '2.1.0-RPI',
+      name: `Raspberry Pi Node (${deviceId})`,
+      deviceType: 'RASPBERRY-PI-TOUCH',
+      location: 'Smart Home Mesh',
+      registrationStatus: 'ACTIVE',
+      capabilities: capabilities || ['relay_1', 'relay_2', 'relay_3', 'relay_4', 'temp_sensor', 'touch_ui'],
+    });
 
     await logAuditEvent({
       deviceId,
