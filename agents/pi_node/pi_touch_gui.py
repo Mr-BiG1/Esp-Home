@@ -5,8 +5,8 @@ Supports full 800x480 / 480x320 touch displays on Raspberry Pi OS.
 Compatible with Raspberry Pi 3, 4, 5 and Debian Trixie / Bookworm / Bullseye kernels.
 """
 
-import sys
 import os
+import sys
 import time
 import json
 import threading
@@ -16,6 +16,12 @@ import psutil
 import socket
 import hmac
 import hashlib
+
+# Ensure DISPLAY is set for physical screen output when launching over SSH
+if "DISPLAY" not in os.environ:
+    os.environ["DISPLAY"] = ":0"
+if "XAUTHORITY" not in os.environ and os.path.exists(os.path.expanduser("~/.Xauthority")):
+    os.environ["XAUTHORITY"] = os.path.expanduser("~/.Xauthority")
 
 # GPIO Library Detection (Supports legacy RPi.GPIO, gpiozero, and Pi 5 lgpio/gpiod)
 GPIO_TYPE = None
