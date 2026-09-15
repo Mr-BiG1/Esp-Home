@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { upsertStoreDevice } from '@/lib/device_store';
+import { upsertStoreDevice, popStoreCommands } from '@/lib/device_store';
 
 export async function POST(request: Request) {
   const bodyText = await request.text();
@@ -8,14 +8,18 @@ export async function POST(request: Request) {
 
   try {
     const body = JSON.parse(bodyText);
+    const targetId = body.device_id || deviceId;
     
     // Update live device status in store
     upsertStoreDevice({
-      deviceId: body.device_id || deviceId,
+      deviceId: targetId,
       state: body,
       wifiStatus: 'ONLINE',
       lastHeartbeat: new Date().toISOString(),
     });
+
+    // Pop any pending commands for this device
+    const pendingCmds = popStoreCommands(targetId);
 
     try {
       const telemetry_batch = body.telemetry_batch || [];
@@ -24,7 +28,7 @@ export async function POST(request: Request) {
           if (item.telemetry_type && item.payload) {
             await prisma.deviceTelemetry.create({
               data: {
-                deviceId,
+                deviceId: targetId,
                 telemetryType: item.telemetry_type,
                 payloadJson: JSON.stringify(item.payload),
                 timestamp: item.timestamp ? new Date(item.timestamp) : new Date(),
@@ -37,9 +41,9 @@ export async function POST(request: Request) {
       console.warn('[Telemetry DB Save Warning - store fallback active]', e);
     }
 
-    return NextResponse.json({ status: 'ACCEPTED' });
+    return NextResponse.json({ status: 'ACCEPTED', commands: pendingCmds });
   } catch (err: any) {
     console.error('[Telemetry Error]', err);
-    return NextResponse.json({ status: 'ACCEPTED' });
+    return NextResponse.json({ status: 'ACCEPTED', commands: [] });
   }
 }

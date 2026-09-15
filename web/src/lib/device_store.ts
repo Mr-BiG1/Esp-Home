@@ -20,14 +20,25 @@ export interface StoreDevice {
   updatedAt: string;
 }
 
+export interface StoreCommand {
+  commandId: string;
+  deviceId: string;
+  module: string;
+  action: string;
+  parameters: Record<string, any>;
+  status: 'PENDING' | 'EXECUTED' | 'FAILED';
+  createdAt: string;
+}
+
 const globalForDevices = globalThis as unknown as {
   inMemoryDevices: Map<string, StoreDevice>;
+  inMemoryCommands: Map<string, StoreCommand[]>;
 };
 
 if (!globalForDevices.inMemoryDevices) {
   globalForDevices.inMemoryDevices = new Map<string, StoreDevice>();
   
-  // Seed initial demo devices if empty
+  // Seed initial devices
   globalForDevices.inMemoryDevices.set('RPI-TOUCH-NODE-01', {
     id: 'dev_rpi_01',
     deviceId: 'RPI-TOUCH-NODE-01',
@@ -51,7 +62,12 @@ if (!globalForDevices.inMemoryDevices) {
   });
 }
 
+if (!globalForDevices.inMemoryCommands) {
+  globalForDevices.inMemoryCommands = new Map<string, StoreCommand[]>();
+}
+
 export const inMemoryDevices = globalForDevices.inMemoryDevices;
+export const inMemoryCommands = globalForDevices.inMemoryCommands;
 
 export function upsertStoreDevice(device: Partial<StoreDevice> & { deviceId: string }) {
   const existing = inMemoryDevices.get(device.deviceId) || {
@@ -71,7 +87,7 @@ export function upsertStoreDevice(device: Partial<StoreDevice> & { deviceId: str
     uptimeSeconds: 100,
     capabilities: device.capabilities || ['relay_1', 'relay_2'],
     configVersion: 1,
-    state: device.state || {},
+    state: {},
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
@@ -79,6 +95,7 @@ export function upsertStoreDevice(device: Partial<StoreDevice> & { deviceId: str
   const updated: StoreDevice = {
     ...existing,
     ...device,
+    state: { ...(existing.state || {}), ...(device.state || {}) },
     lastHeartbeat: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     wifiStatus: 'ONLINE',
@@ -86,4 +103,39 @@ export function upsertStoreDevice(device: Partial<StoreDevice> & { deviceId: str
 
   inMemoryDevices.set(device.deviceId, updated);
   return updated;
+}
+
+export function addStoreCommand(cmd: Omit<StoreCommand, 'commandId' | 'status' | 'createdAt'>) {
+  const commandId = `cmd_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  const fullCmd: StoreCommand = {
+    ...cmd,
+    commandId,
+    status: 'PENDING',
+    createdAt: new Date().toISOString(),
+  };
+
+  const list = inMemoryCommands.get(cmd.deviceId) || [];
+  list.push(fullCmd);
+  inMemoryCommands.set(cmd.deviceId, list);
+
+  // Update relay state in device store immediately
+  if (cmd.module === 'relay') {
+    const dev = inMemoryDevices.get(cmd.deviceId);
+    if (dev) {
+      const channel = cmd.parameters?.channel || 1;
+      const key = `relay_${channel}`;
+      const currentState = dev.state?.[key] || false;
+      const newState = cmd.action === 'toggle' ? !currentState : Boolean(cmd.parameters?.state);
+      dev.state = { ...dev.state, [key]: newState };
+      inMemoryDevices.set(cmd.deviceId, dev);
+    }
+  }
+
+  return fullCmd;
+}
+
+export function popStoreCommands(deviceId: string): StoreCommand[] {
+  const list = inMemoryCommands.get(deviceId) || [];
+  inMemoryCommands.set(deviceId, []);
+  return list;
 }

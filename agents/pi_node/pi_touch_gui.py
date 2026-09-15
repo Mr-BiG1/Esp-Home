@@ -186,6 +186,22 @@ class CloudSyncThread(threading.Thread):
                 resp = requests.post(url, data=payload_str, headers=headers, timeout=3)
                 if resp.status_code == 200:
                     self.status["cloud_online"] = True
+                    try:
+                        res_data = resp.json()
+                        cmds = res_data.get("commands", [])
+                        for cmd in cmds:
+                            mod = cmd.get("module")
+                            act = cmd.get("action")
+                            params = cmd.get("parameters", {})
+                            if mod == "relay":
+                                ch = int(params.get("channel", 1)) - 1
+                                st = params.get("state", True)
+                                if act == "toggle":
+                                    self.hw.toggle_relay(ch)
+                                else:
+                                    self.hw.set_relay(ch, bool(st))
+                    except Exception as e:
+                        print(f"Error processing cloud command: {e}")
                 else:
                     self.status["cloud_online"] = False
 

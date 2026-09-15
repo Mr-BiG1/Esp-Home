@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getCurrentUser, hasPermission } from '@/lib/auth';
 import { logAuditEvent } from '@/lib/audit';
+import { addStoreCommand } from '@/lib/device_store';
 
 export async function POST(
   request: Request,
@@ -16,44 +17,49 @@ export async function POST(
 
   try {
     const body = await request.json();
-    const { module, action, parameters, idempotency_key, ttl_seconds } = body;
+    const { module, action, parameters } = body;
 
     if (!module || !action) {
       return NextResponse.json({ error: 'Module and action are required' }, { status: 400 });
     }
 
-    const device = await prisma.device.findUnique({ where: { deviceId } });
-    if (!device) {
-      return NextResponse.json({ error: 'Device not found' }, { status: 404 });
-    }
-
-    const expiresAt = new Date(Date.now() + (ttl_seconds || 3600) * 1000);
-
-    const command = await prisma.command.create({
-      data: {
-        deviceId,
-        module,
-        action,
-        parametersJson: JSON.stringify(parameters || {}),
-        status: 'PENDING',
-        idempotencyKey: idempotency_key || null,
-        createdByUserId: user.userId,
-        expiresAt,
-      },
+    // Add command to in-memory queue & update state instantly for Vercel
+    const storeCmd = addStoreCommand({
+      deviceId,
+      module,
+      action,
+      parameters: parameters || {},
     });
+
+    try {
+      const expiresAt = new Date(Date.now() + 3600 * 1000);
+      await prisma.command.create({
+        data: {
+          deviceId,
+          module,
+          action,
+          parametersJson: JSON.stringify(parameters || {}),
+          status: 'PENDING',
+          createdByUserId: user.userId,
+          expiresAt,
+        },
+      });
+    } catch (e) {
+      console.warn('[Dispatch Command DB Warning - store fallback active]', e);
+    }
 
     await logAuditEvent({
       userId: user.userId,
       deviceId,
       action: 'admin.dispatch_command',
-      payload: { commandId: command.commandId, module, action, parameters },
+      payload: { commandId: storeCmd.commandId, module, action, parameters },
       result: 'QUEUED',
     });
 
     return NextResponse.json({
       status: 'QUEUED',
-      command_id: command.commandId,
-      expires_at: command.expiresAt.toISOString(),
+      command_id: storeCmd.commandId,
+      expires_at: new Date(Date.now() + 3600 * 1000).toISOString(),
     });
   } catch (err: any) {
     console.error('[Dispatch Command Error]', err);

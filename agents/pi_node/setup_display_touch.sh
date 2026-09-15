@@ -17,6 +17,10 @@ if [ "$EUID" -ne 0 ]; then
   exit 1
 fi
 
+REAL_USER="${SUDO_USER:-$USER}"
+USER_HOME=$(eval echo "~$REAL_USER")
+APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 echo "[1/4] Updating package lists and installing Python & X11 dependencies..."
 apt-get update -y
 apt-get install -y \
@@ -57,7 +61,6 @@ fi
 
 echo "[3/4] Creating Auto-Start Kiosk Service for Raspberry Pi OS..."
 
-APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVICE_PATH="/etc/systemd/system/smarthome-gui.service"
 
 cat <<EOF > "$SERVICE_PATH"
@@ -68,11 +71,10 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=pi
+User=$REAL_USER
 Environment=DISPLAY=:0
-Environment=XAUTHORITY=/home/pi/.Xauthority
+Environment=XAUTHORITY=$USER_HOME/.Xauthority
 WorkingDirectory=$APP_DIR
-ExecStartPre=/bin/sleep 3
 ExecStart=/usr/bin/python3 $APP_DIR/pi_touch_gui.py
 Restart=always
 RestartSec=5
@@ -81,18 +83,11 @@ RestartSec=5
 WantedBy=graphical.target
 EOF
 
-# If user is not 'pi', update service file for current user
-REAL_USER="${SUDO_USER:-$USER}"
-if [ "$REAL_USER" != "root" ] && [ "$REAL_USER" != "pi" ]; then
-  sed -i "s/User=pi/User=$REAL_USER/g" "$SERVICE_PATH"
-  sed -i "s|/home/pi|/home/$REAL_USER|g" "$SERVICE_PATH"
-fi
-
 systemctl daemon-reload
 systemctl enable smarthome-gui.service
 
 echo "[4/4] Screen Saver & Blanking Suppression Setup..."
-AUTOSTART_DIR="/home/${REAL_USER}/.config/autostart"
+AUTOSTART_DIR="$USER_HOME/.config/autostart"
 mkdir -p "$AUTOSTART_DIR"
 
 cat <<EOF > "$AUTOSTART_DIR/disable-dpms.desktop"
@@ -110,6 +105,7 @@ chown -R "$REAL_USER:$REAL_USER" "$AUTOSTART_DIR"
 echo "======================================================================"
 echo "    Raspberry Pi OS Display & Touch Setup Complete!"
 echo "======================================================================"
+echo "  - Target User:            $REAL_USER"
 echo "  - Touch GUI App Location: $APP_DIR/pi_touch_gui.py"
 echo "  - Systemd Service Name:   smarthome-gui.service"
 echo ""
@@ -118,7 +114,4 @@ echo "  python3 $APP_DIR/pi_touch_gui.py"
 echo ""
 echo "To start the auto-boot service now:"
 echo "  sudo systemctl start smarthome-gui.service"
-echo ""
-echo "Rebooting recommended to apply touchscreen driver overlays:"
-echo "  sudo reboot"
 echo "======================================================================"
