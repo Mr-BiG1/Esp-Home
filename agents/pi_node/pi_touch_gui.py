@@ -205,6 +205,11 @@ class CloudSyncThread(threading.Thread):
                                     self.status["target_temp"] = float(params["targetTemp"])
                                 if "mode" in params:
                                     self.status["climate_mode"] = str(params["mode"])
+                            elif mod == "display":
+                                if act == "UPDATE_LAYOUT":
+                                    self.status["custom_widgets"] = params.get("widgets", [])
+                                    self.status["active_tab"] = 2
+
                     except Exception as e:
                         print(f"Error processing cloud command: {e}")
                 else:
@@ -244,8 +249,15 @@ class TouchApp:
             "target_temp": 22.5,
             "climate_mode": "AUTO",
             "cloud_online": False,
-            "active_tab": 0  # 0: Home, 1: Relays, 2: System
+            "active_tab": 0,
+            "custom_widgets": [
+                { "id": "w1", "type": "header", "title": "SMART HOME MESH", "x": 0, "y": 0, "w": 320, "h": 26, "color": "#00d2ff" },
+                { "id": "w2", "type": "temp_card", "title": "CLIMATE SENSOR", "x": 10, "y": 34, "w": 145, "h": 90, "color": "#ffab00" },
+                { "id": "w3", "type": "relay_card", "title": "RELAY 1 (MAIN)", "x": 165, "y": 34, "w": 145, "h": 42, "color": "#2ed573" },
+                { "id": "w4", "type": "relay_card", "title": "RELAY 2 (AUX)", "x": 165, "y": 82, "w": 145, "h": 42, "color": "#2ed573" }
+            ]
         }
+
 
         self.sync_thread = CloudSyncThread(self.hw, self.status)
         self.sync_thread.start()
@@ -305,8 +317,9 @@ class TouchApp:
         pygame.draw.circle(self.screen, c_color, (self.width - self.pad_x - indicator_r, self.header_h // 2), indicator_r)
 
     def render_tabs(self):
-        tabs = ["HOME & CLIMATE", "RELAYS & POWER", "SYSTEM HEALTH"]
+        tabs = ["HOME & CLIMATE", "RELAYS & POWER", "CUSTOM CANVAS", "SYSTEM HEALTH"]
         tab_w = self.width // len(tabs)
+
         y = self.height - self.tab_h
 
         pygame.draw.rect(self.screen, COLOR_HEADER, (0, y, self.width, self.tab_h))
@@ -487,6 +500,60 @@ class TouchApp:
 
             self.clickable_rects.append((pygame.Rect(card_r), "RELAY", i))
 
+    def render_custom_canvas_page(self):
+        y_top = self.header_h
+        avail_w = self.width
+        avail_h = self.height - self.header_h - self.tab_h
+
+        scale_x = avail_w / 320.0
+        scale_y = avail_h / 240.0
+
+        widgets = self.status.get("custom_widgets", [])
+
+        if not widgets:
+            lbl = self.font_title.render("NO CUSTOM CANVAS DESIGNED YET", True, COLOR_MUTED)
+            self.screen.blit(lbl, (self.pad_x, y_top + self.pad_y))
+            sub = self.font_med.render("Use Web App /designer to create & push your custom layout!", True, COLOR_WHITE)
+            self.screen.blit(sub, (self.pad_x, y_top + self.pad_y + lbl.get_height() + 10))
+            return
+
+        for idx, w in enumerate(widgets):
+            try:
+                wx = int(w.get("x", 0) * scale_x)
+                wy = y_top + int(w.get("y", 0) * scale_y)
+                ww = max(30, int(w.get("w", 100) * scale_x))
+                wh = max(18, int(w.get("h", 40) * scale_y))
+                title = w.get("title", f"Widget #{idx+1}")
+                hex_col = w.get("color", "#00d2ff")
+
+                r = int(hex_col[1:3], 16) if len(hex_col) == 7 else 0
+                g = int(hex_col[3:5], 16) if len(hex_col) == 7 else 210
+                b = int(hex_col[5:7], 16) if len(hex_col) == 7 else 255
+                b_color = (r, g, b)
+
+                w_rect = (wx, wy, ww, wh)
+                self.draw_rounded_rect(self.screen, w_rect, COLOR_CARD, 8, b_color)
+
+                w_title_surf = self.font_small.render(title, True, b_color)
+                self.screen.blit(w_title_surf, (wx + 6, wy + 4))
+
+                w_type = w.get("type", "")
+                if "temp" in w_type or "CLIMATE" in title:
+                    val_str = f"{self.status['cpu_temp']:.1f}°C"
+                    val_surf = self.font_med.render(val_str, True, COLOR_WHITE)
+                    self.screen.blit(val_surf, (wx + 6, wy + 4 + w_title_surf.get_height() + 2))
+                elif "relay" in w_type or "RELAY" in title:
+                    relay_idx = idx % 4
+                    st = self.hw.states[relay_idx]
+                    st_str = "ON" if st else "OFF"
+                    st_color = COLOR_ON if st else COLOR_RED
+                    st_surf = self.font_med.render(st_str, True, st_color)
+                    self.screen.blit(st_surf, (wx + 6, wy + 4 + w_title_surf.get_height() + 2))
+                    self.clickable_rects.append((pygame.Rect(w_rect), "RELAY", relay_idx))
+
+            except Exception:
+                pass
+
     def render_system_page(self):
         y_top = self.header_h + self.pad_y
         lbl = self.font_title.render("SYSTEM TELEMETRY & HARDWARE STATUS", True, COLOR_WHITE)
@@ -549,9 +616,9 @@ class TouchApp:
                     if event.key == K_ESCAPE or event.key == K_q:
                         running = False
                     elif event.key == K_RIGHT:
-                        self.status["active_tab"] = (self.status["active_tab"] + 1) % 3
+                        self.status["active_tab"] = (self.status["active_tab"] + 1) % 4
                     elif event.key == K_LEFT:
-                        self.status["active_tab"] = (self.status["active_tab"] - 1) % 3
+                        self.status["active_tab"] = (self.status["active_tab"] - 1) % 4
 
                 elif event.type == MOUSEBUTTONDOWN:
                     self.touch_start_x, self.touch_start_y = event.pos
@@ -562,9 +629,9 @@ class TouchApp:
                         dx = event.pos[0] - self.touch_start_x
                         if abs(dx) > int(self.width * 0.15): # Dynamic Swipe Threshold
                             if dx < 0:
-                                self.status["active_tab"] = (self.status["active_tab"] + 1) % 3
+                                self.status["active_tab"] = (self.status["active_tab"] + 1) % 4
                             else:
-                                self.status["active_tab"] = (self.status["active_tab"] - 1) % 3
+                                self.status["active_tab"] = (self.status["active_tab"] - 1) % 4
                         self.touch_start_x = None
 
             # Render Screen to main window or rotated buffer
@@ -583,6 +650,8 @@ class TouchApp:
                 elif self.status["active_tab"] == 1:
                     self.render_relays_page()
                 elif self.status["active_tab"] == 2:
+                    self.render_custom_canvas_page()
+                elif self.status["active_tab"] == 3:
                     self.render_system_page()
                 self.render_tabs()
 
@@ -598,6 +667,8 @@ class TouchApp:
                 elif self.status["active_tab"] == 1:
                     self.render_relays_page()
                 elif self.status["active_tab"] == 2:
+                    self.render_custom_canvas_page()
+                elif self.status["active_tab"] == 3:
                     self.render_system_page()
 
                 self.render_tabs()
@@ -608,6 +679,7 @@ class TouchApp:
         self.hw.cleanup()
         pygame.quit()
         sys.exit(0)
+
 
 if __name__ == "__main__":
     app = TouchApp()
