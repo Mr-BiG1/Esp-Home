@@ -44,7 +44,7 @@ from pygame.locals import *
 CONFIG = {
     "device_id": "RPI-TOUCH-NODE-01",
     "device_secret": "rpi_secret_key_mesh_2026",
-    "cloud_endpoint": "http://localhost:3000/api/v1",
+    "cloud_endpoint": "https://esp-home-inky.vercel.app/api/v1",
     "poll_interval_sec": 5,
     "relay_pins": [17, 27, 22, 23],  # BCM pin numbers
     "fullscreen": True if os.environ.get("DESKTOP_SESSION") is None else False,
