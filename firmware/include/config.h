@@ -13,8 +13,9 @@
 #endif
 
 #ifndef DEFAULT_API_ENDPOINT
-#define DEFAULT_API_ENDPOINT "https://api.smarthome.example.com"
+#define DEFAULT_API_ENDPOINT "https://esp-home-inky.vercel.app"
 #endif
+
 
 // Hardware Pin Definitions for ESP32-S3
 #define PIN_TFT_MOSI 11
