@@ -35,15 +35,9 @@ bool TouchDriver::init(SPIClass &spiBus) {
         pinMode(PIN_TOUCH_IRQ, INPUT_PULLUP);
     }
 
-    // Call touch begin (which internally resets SPI pins)
+    // Initialize touch controller on shared SPI bus
     s_touch.begin(spiBus);
     s_touch.setRotation(1);
-
-    // CRITICAL FIX: Lock SPI bus back to exact confirmed pins (SCK=12, MISO=13, MOSI=11, CS=10)
-    SPI.begin(PIN_TFT_SCLK, PIN_TFT_MISO, PIN_TFT_MOSI, PIN_TFT_CS);
-    SPI.setFrequency(10000000);
-    SPI.setDataMode(SPI_MODE0);
-    SPI.setBitOrder(MSBFIRST);
 
     digitalWrite(PIN_TFT_CS, HIGH);
     digitalWrite(PIN_TOUCH_CS, HIGH);
