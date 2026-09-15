@@ -149,7 +149,6 @@ class CloudSyncThread(threading.Thread):
     def run(self):
         while self.running:
             try:
-                # Read Pi Temp
                 temp = 42.0
                 try:
                     with open("/sys/class/thermal/thermal_zone0/temp", "r") as f:
@@ -161,13 +160,14 @@ class CloudSyncThread(threading.Thread):
                 self.status["cpu_usage"] = psutil.cpu_percent()
                 self.status["ram_usage"] = psutil.virtual_memory().percent
 
-                # Telemetry Payload
                 telemetry = {
                     "device_id": CONFIG["device_id"],
                     "timestamp": int(time.time()),
                     "cpu_usage": self.status["cpu_usage"],
                     "mem_usage": self.status["ram_usage"],
                     "cpu_temp": self.status["cpu_temp"],
+                    "target_temp": self.status.get("target_temp", 22.5),
+                    "climate_mode": self.status.get("climate_mode", "AUTO"),
                     "relays": self.hw_mgr.states
                 }
 
@@ -197,9 +197,14 @@ class CloudSyncThread(threading.Thread):
                                 ch = int(params.get("channel", 1)) - 1
                                 st = params.get("state", True)
                                 if act == "toggle":
-                                    self.hw.toggle_relay(ch)
+                                    self.hw_mgr.toggle_relay(ch)
                                 else:
-                                    self.hw.set_relay(ch, bool(st))
+                                    self.hw_mgr.set_relay(ch, bool(st))
+                            elif mod == "climate":
+                                if "targetTemp" in params:
+                                    self.status["target_temp"] = float(params["targetTemp"])
+                                if "mode" in params:
+                                    self.status["climate_mode"] = str(params["mode"])
                     except Exception as e:
                         print(f"Error processing cloud command: {e}")
                 else:
@@ -236,6 +241,8 @@ class TouchApp:
             "cpu_temp": 42.5,
             "cpu_usage": 15.0,
             "ram_usage": 32.0,
+            "target_temp": 22.5,
+            "climate_mode": "AUTO",
             "cloud_online": False,
             "active_tab": 0  # 0: Home, 1: Relays, 2: System
         }
@@ -246,24 +253,21 @@ class TouchApp:
         # Touch state
         self.touch_start_x = None
         self.touch_start_y = None
-        self.clickable_rects = []  # Stores (rect, callback_id, payload)
+        self.clickable_rects = []
 
     def recalculate_layout(self):
         w = self.width
         h = self.height
 
-        # Dynamic typography scaled to screen height
         self.font_title = pygame.font.SysFont("DejaVu Sans, Arial", max(16, int(h * 0.045)), bold=True)
         self.font_big = pygame.font.SysFont("DejaVu Sans, Arial", max(22, int(h * 0.075)), bold=True)
         self.font_med = pygame.font.SysFont("DejaVu Sans, Arial", max(13, int(h * 0.034)), bold=True)
         self.font_small = pygame.font.SysFont("DejaVu Sans, Arial", max(10, int(h * 0.024)))
 
-        # Header and Tab Dimensions
         self.header_h = max(40, int(h * 0.10))
         self.tab_h = max(40, int(h * 0.09))
         self.content_h = h - self.header_h - self.tab_h
 
-        # Padding
         self.pad_x = max(10, int(w * 0.025))
         self.pad_y = max(10, int(h * 0.025))
 
@@ -285,27 +289,23 @@ class TouchApp:
         surface.blit(shape_surf, (int(rect[0]), int(rect[1])))
 
     def render_header(self):
-        # Header bar
         pygame.draw.rect(self.screen, COLOR_HEADER, (0, 0, self.width, self.header_h))
         pygame.draw.line(self.screen, COLOR_CARD_BORDER, (0, self.header_h), (self.width, self.header_h), 2)
 
-        # Title
         t_surf = self.font_title.render("SMART HOME MESH", True, COLOR_ACCENT)
         self.screen.blit(t_surf, (self.pad_x, (self.header_h - t_surf.get_height()) // 2))
 
-        # Clock
         time_str = time.strftime("%H:%M:%S")
         clk_surf = self.font_med.render(time_str, True, COLOR_WHITE)
         clk_x = self.width - self.pad_x - clk_surf.get_width() - int(self.width * 0.05)
         self.screen.blit(clk_surf, (clk_x, (self.header_h - clk_surf.get_height()) // 2))
 
-        # Cloud Status Indicator
         c_color = COLOR_ON if self.status["cloud_online"] else COLOR_RED
         indicator_r = max(4, int(self.header_h * 0.16))
         pygame.draw.circle(self.screen, c_color, (self.width - self.pad_x - indicator_r, self.header_h // 2), indicator_r)
 
     def render_tabs(self):
-        tabs = ["HOME & SENSORS", "RELAYS & POWER", "SYSTEM HEALTH"]
+        tabs = ["HOME & CLIMATE", "RELAYS & POWER", "SYSTEM HEALTH"]
         tab_w = self.width // len(tabs)
         y = self.height - self.tab_h
 
@@ -331,36 +331,91 @@ class TouchApp:
 
     def render_home_page(self):
         y_top = self.header_h + self.pad_y
-        row1_h = int(self.content_h * 0.38)
+        row1_h = int(self.content_h * 0.45)
         card_w = (self.width - self.pad_x * 3) // 2
 
-        # Card 1: Temperature & Climate
+        # Card 1: Climate & Thermostat Setpoint Adjuster
         card1_rect = (self.pad_x, y_top, card_w, row1_h)
         self.draw_rounded_rect(self.screen, card1_rect, COLOR_CARD, 12, COLOR_CARD_BORDER)
 
-        t_lbl = self.font_med.render("CPU / SYSTEM TEMP", True, COLOR_MUTED)
-        self.screen.blit(t_lbl, (card1_rect[0] + 15, card1_rect[1] + 12))
+        t_lbl = self.font_med.render("CLIMATE THERMOSTAT CONTROL", True, COLOR_MUTED)
+        self.screen.blit(t_lbl, (card1_rect[0] + 12, card1_rect[1] + 10))
 
-        temp_val = self.status["cpu_temp"]
-        t_color = COLOR_RED if temp_val > 65 else (COLOR_ACCENT if temp_val < 50 else COLOR_YELLOW)
-        v_surf = self.font_big.render(f"{temp_val:.1f} °C", True, t_color)
-        self.screen.blit(v_surf, (card1_rect[0] + 15, card1_rect[1] + 12 + t_lbl.get_height() + 5))
+        # Ambient & Target
+        curr_temp = self.status["cpu_temp"]
+        target_temp = self.status.get("target_temp", 22.5)
 
-        sub_surf = self.font_small.render("Thermal Status: NOMINAL", True, COLOR_WHITE)
-        self.screen.blit(sub_surf, (card1_rect[0] + 15, card1_rect[1] + row1_h - sub_surf.get_height() - 10))
+        v_surf = self.font_big.render(f"{curr_temp:.1f}°C", True, COLOR_WHITE)
+        self.screen.blit(v_surf, (card1_rect[0] + 12, card1_rect[1] + 10 + t_lbl.get_height() + 4))
 
-        # Card 2: Mesh Controller Status
+        tgt_lbl = self.font_med.render(f"Target: {target_temp:.1f}°C", True, COLOR_ACCENT)
+        self.screen.blit(tgt_lbl, (card1_rect[0] + 12, card1_rect[1] + 10 + t_lbl.get_height() + 4 + v_surf.get_height() + 4))
+
+        # Setpoint Adjust Buttons [-] [+]
+        btn_w = max(36, int(card_w * 0.22))
+        btn_h = max(28, int(row1_h * 0.28))
+        btn_y = card1_rect[1] + row1_h - btn_h - 10
+
+        dec_r = (card1_rect[0] + card_w - btn_w * 2 - 16, btn_y, btn_w, btn_h)
+        self.draw_rounded_rect(self.screen, dec_r, (40, 50, 70), 8, COLOR_ACCENT)
+        dec_t = self.font_big.render("-", True, COLOR_WHITE)
+        dec_rect = dec_t.get_rect(center=(dec_r[0] + btn_w // 2, dec_r[1] + btn_h // 2))
+        self.screen.blit(dec_t, dec_rect)
+        self.clickable_rects.append((pygame.Rect(dec_r), "TEMP_DEC", None))
+
+        inc_r = (card1_rect[0] + card_w - btn_w - 10, btn_y, btn_w, btn_h)
+        self.draw_rounded_rect(self.screen, inc_r, (10, 80, 100), 8, COLOR_ACCENT)
+        inc_t = self.font_big.render("+", True, COLOR_WHITE)
+        inc_rect = inc_t.get_rect(center=(inc_r[0] + btn_w // 2, inc_r[1] + btn_h // 2))
+        self.screen.blit(inc_t, inc_rect)
+        self.clickable_rects.append((pygame.Rect(inc_r), "TEMP_INC", None))
+
+        # Card 2: Quick Scene Actions & Thermostat Mode
         card2_rect = (self.pad_x * 2 + card_w, y_top, card_w, row1_h)
         self.draw_rounded_rect(self.screen, card2_rect, COLOR_CARD, 12, COLOR_CARD_BORDER)
 
-        e_lbl = self.font_med.render("MESH CONTROLLER STATUS", True, COLOR_MUTED)
-        self.screen.blit(e_lbl, (card2_rect[0] + 15, card2_rect[1] + 12))
+        e_lbl = self.font_med.render("QUICK SCENES & THERMOSTAT MODE", True, COLOR_MUTED)
+        self.screen.blit(e_lbl, (card2_rect[0] + 12, card2_rect[1] + 10))
 
-        m_surf = self.font_big.render("ACTIVE NODE", True, COLOR_ON)
-        self.screen.blit(m_surf, (card2_rect[0] + 15, card2_rect[1] + 12 + e_lbl.get_height() + 5))
+        # Mode Buttons (AUTO, BOOST, OFF)
+        modes = ["AUTO", "BOOST", "OFF"]
+        m_gap = 6
+        m_w = (card_w - 24 - m_gap * 2) // 3
+        m_h = max(26, int(row1_h * 0.25))
+        m_y = card2_rect[1] + 10 + e_lbl.get_height() + 8
 
-        m_sub = self.font_small.render(f"Cloud: {'ONLINE' if self.status['cloud_online'] else 'STANDALONE'}", True, COLOR_WHITE)
-        self.screen.blit(m_sub, (card2_rect[0] + 15, card2_rect[1] + row1_h - m_sub.get_height() - 10))
+        curr_mode = self.status.get("climate_mode", "AUTO")
+        for idx, m_name in enumerate(modes):
+            mx = card2_rect[0] + 12 + idx * (m_w + m_gap)
+            is_m_act = (curr_mode == m_name)
+            m_bg = (10, 80, 60) if is_m_act else (30, 40, 60)
+            m_border = COLOR_ON if is_m_act else COLOR_CARD_BORDER
+
+            m_r = (mx, m_y, m_w, m_h)
+            self.draw_rounded_rect(self.screen, m_r, m_bg, 6, m_border)
+            m_t = self.font_small.render(m_name, True, COLOR_WHITE if is_m_act else COLOR_MUTED)
+            m_t_rect = m_t.get_rect(center=(mx + m_w // 2, m_y + m_h // 2))
+            self.screen.blit(m_t, m_t_rect)
+            self.clickable_rects.append((pygame.Rect(m_r), "MODE_SET", m_name))
+
+        # Quick Relay All On / All Off Buttons
+        act_w = (card_w - 30) // 2
+        act_h = max(28, int(row1_h * 0.28))
+        act_y = card2_rect[1] + row1_h - act_h - 10
+
+        on_r = (card2_rect[0] + 12, act_y, act_w, act_h)
+        self.draw_rounded_rect(self.screen, on_r, (15, 75, 45), 8, COLOR_ON)
+        on_t = self.font_small.render("ALL RELAYS ON", True, COLOR_WHITE)
+        on_t_rect = on_t.get_rect(center=(on_r[0] + act_w // 2, act_y + act_h // 2))
+        self.screen.blit(on_t, on_t_rect)
+        self.clickable_rects.append((pygame.Rect(on_r), "ALL_ON", None))
+
+        off_r = (card2_rect[0] + 18 + act_w, act_y, act_w, act_h)
+        self.draw_rounded_rect(self.screen, off_r, (75, 25, 35), 8, COLOR_RED)
+        off_t = self.font_small.render("ALL RELAYS OFF", True, COLOR_WHITE)
+        off_t_rect = off_t.get_rect(center=(off_r[0] + act_w // 2, act_y + act_h // 2))
+        self.screen.blit(off_t, off_t_rect)
+        self.clickable_rects.append((pygame.Rect(off_r), "ALL_OFF", None))
 
         # Row 2: Quick Relays Container
         y_row2 = y_top + row1_h + self.pad_y
@@ -368,7 +423,7 @@ class TouchApp:
         container_rect = (self.pad_x, y_row2, self.width - self.pad_x * 2, row2_h)
         self.draw_rounded_rect(self.screen, container_rect, COLOR_CARD, 12, COLOR_CARD_BORDER)
 
-        q_lbl = self.font_med.render("QUICK RELAY CONTROL (TOUCH TO TOGGLE)", True, COLOR_MUTED)
+        q_lbl = self.font_med.render("QUICK RELAY CONTROL (TOUCH CARD TO TOGGLE)", True, COLOR_MUTED)
         self.screen.blit(q_lbl, (container_rect[0] + 15, container_rect[1] + 10))
 
         relay_gap = 10
@@ -386,10 +441,10 @@ class TouchApp:
             self.draw_rounded_rect(self.screen, btn_r, btn_bg, 10, btn_border)
 
             r_name = self.font_med.render(f"RELAY {i+1}", True, COLOR_WHITE)
-            self.screen.blit(r_name, (rx + 10, ry + 10))
+            self.screen.blit(r_name, (rx + 10, ry + 8))
 
             r_st = self.font_big.render("ON" if state else "OFF", True, COLOR_ON if state else COLOR_OFF)
-            self.screen.blit(r_st, (rx + 10, ry + 10 + r_name.get_height() + 5))
+            self.screen.blit(r_st, (rx + 10, ry + 8 + r_name.get_height() + 2))
 
             self.clickable_rects.append((pygame.Rect(btn_r), "RELAY", i))
 
@@ -449,6 +504,7 @@ class TouchApp:
             f"CPU Load: {self.status['cpu_usage']:.1f}%",
             f"RAM Load: {self.status['ram_usage']:.1f}%",
             f"CPU Temp: {self.status['cpu_temp']:.1f} °C",
+            f"Thermostat Target: {self.status.get('target_temp', 22.5):.1f} °C ({self.status.get('climate_mode', 'AUTO')})",
             f"GPIO Driver: {self.hw.mode}"
         ]
 
@@ -466,7 +522,18 @@ class TouchApp:
                     self.status["active_tab"] = payload
                 elif cb_type == "RELAY":
                     self.hw.toggle_relay(payload)
+                elif cb_type == "TEMP_DEC":
+                    self.status["target_temp"] = round(max(10.0, self.status.get("target_temp", 22.5) - 0.5), 1)
+                elif cb_type == "TEMP_INC":
+                    self.status["target_temp"] = round(min(35.0, self.status.get("target_temp", 22.5) + 0.5), 1)
+                elif cb_type == "MODE_SET":
+                    self.status["climate_mode"] = payload
+                elif cb_type == "ALL_ON":
+                    for i in range(4): self.hw.set_relay(i, True)
+                elif cb_type == "ALL_OFF":
+                    for i in range(4): self.hw.set_relay(i, False)
                 return
+
 
     def run(self):
         running = True

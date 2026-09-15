@@ -9,12 +9,13 @@ export default function DeveloperPage() {
   const [isLoading, setIsLoading] = useState(true);
 
   // Form State for registering new module
-  const [deviceId, setDeviceId] = useState('HOME-CTRL-001');
+  const [deviceId, setDeviceId] = useState('RPI-TOUCH-NODE-01');
   const [moduleKey, setModuleKey] = useState('sensor.temperature.bme280');
   const [name, setName] = useState('BME280 Temp & Humidity Sensor');
   const [version, setVersion] = useState('1.0.0');
   const [configJson, setConfigJson] = useState('{\n  "i2c_address": "0x76",\n  "sampling_rate_sec": 30\n}');
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+
 
   const fetchModules = async () => {
     setIsLoading(true);
